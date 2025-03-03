@@ -1,6 +1,6 @@
 # Tools for reverse engineering apple C4000 baseband firmware
 
-The firmware is stored in an approx 185M file, with 'rkosftab
+The baseband firmware is stored in an approx 185M file, with 'rkosftab
 
 known sections:
 
@@ -22,4 +22,17 @@ Splits the main ftab.bin file into separate parts.
 
 # loadfwsg.py
 
-Loader for the fwsg type binaries.
+hex-rays IDA Loader for the fwsg type binaries.
+Installing this file in the IDA/loader directory will allow you to easily disassemble fwsg files.
+
+# aa01tool.py
+
+This tool can decode and unpack OTA firmware updates.
+These updates come as .aea files, you can decrypt these sing the [ipsw](https://github.com/blacktop/ipsw) tool,
+the use aa01tool to unpack.
+
+
+# author
+
+Willem Hengeveld <itsme@xs4all.nl>
+
