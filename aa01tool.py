@@ -7,6 +7,10 @@ import os.path
 
 This tool can list and extract the contents of the aa01 file.
 
+This is also called 'apple archive'
+see https://github.com/0xilis/libNeoAppleArchive/blob/main/docs/NeoAAFieldType.md
+and https://theapplewiki.com/wiki/Apple_Archive
+
 Author: Willem Hengeveld <itsme@xs4all.nl>
 """
 class Info:
@@ -19,12 +23,13 @@ class Info:
         self.yop = None
         self.lbl = None
     def __repr__(self):
-        return f"t:{self.typ} y:{self.yop} lbl:{self.lbl} {self.idx:010x} {self.idz:08x} {self.siz:08x}"
+        return f"t:{self.typ} y:{self.yop} lbl:{self.lbl} {self.idx or 0:010x} {self.idz or 0:08x} {self.siz or 0:08x}"
+
 
 class Meta:
     """ contains metadata for the files, liek uid, gid, filemode, timestamps """
     def __init__(self):
-        self.filename = None
+        self.pat = None
         self.typ = None
         self.uid = None
         self.gid = None
@@ -33,24 +38,26 @@ class Meta:
         self.mtm = None
         self.ctm = None
     def __repr__(self):
-        return f"  t:{self.typ} {self.mod:07o} {self.uid} {self.gid} {self.flg} {self.mtm:08x} {self.ctm:08x}  {self.filename}"
+        return f"  t:{self.typ} {self.mod or 0:07o} {self.uid} {self.gid} {self.flg} {self.mtm or 0:08x} {self.ctm or 0:08x}  {self.pat}"
+
 
 class Data:
     """ This contins info on the file-type, size, and data """
     def __init__(self):
-        self.filename = None
+        self.pat = None
         self.typ = None
         self.flg = None
-        self.dsz = None
+        self.dat = None
         self.dataofs = None
         self.fh = None
     def __repr__(self):
-        if self.typ == 'F':
-            return f"  {self.flg} {self.dsz:08x}  {self.filename}"
-        elif self.typ == 'D':
-            return f"  - ........  {self.filename}"
+        if self.typ == ord('F'):
+            return f"  {self.flg} {self.dat or 0:08x}  {self.pat}"
+        elif self.typ == ord('D'):
+            return f"  - ........  {self.pat}"
         else:
-            raise Exception("unknown typ")
+            return f"  {self.typ} unknown"
+
 
 class Top:
     """ The top-level contains sections of info, meta and data types """
@@ -58,9 +65,9 @@ class Top:
         self.typ = None
         self.yop = None
         self.lbl = None
-        self.dsz = None
+        self.dat = None
     def __repr__(self):
-        return f"t:{self.typ} y:{self.yop} lbl:{self.lbl} dsz={self.dsz:08x}"
+        return f"t:{self.typ} y:{self.yop} lbl:{self.lbl} dat={self.dat or 0:08x}"
 
 
 def decoder(fh, cls):
@@ -92,74 +99,49 @@ def decoder(fh, cls):
          - name: P
          - rest: 1/2/4/8
         """
-        def readtime(spec):
-            t = rd.read64le()
-            match spec:
-                case 'T': rd.skip(4)
-                case 'S': pass
-                case _:
-                    raise Exception("invalid TIMx")
-            return t
-        def readsize(spec):
-            match spec:
-                case 'A': return rd.read16le()
-                case 'B': return rd.read32le()
-            raise Exception("invalid DATx")
         def readvalue(spec):
             match spec:
                 case '1': return rd.readbyte()
                 case '2': return rd.read16le()
                 case '4': return rd.read32le()
                 case '8': return rd.read64le()
-            raise Exception("invalid VALn")
-        def readname(spec):
-            match spec:
+                case 'A': return rd.read16le()
+                case 'B': return rd.read32le()
                 case 'P':
                     sz = rd.read16le()
                     return rd.readstr(sz)
-            raise Exception("invalid strP")
+                case 'T':
+                    t = rd.read64le()
+                    rd.skip(4)
+                    return t
+                case 'S': return rd.read64le()
+            raise Exception("invalid valuetype")
 
-        dsz = 0
         # read properties
         while not rd.eof():
             tag = rd.readstr(4)
-            match tag[:3]:
-                case 'CTM': ent.ctm = readtime(tag[3])
-                case 'MTM': ent.mtm = readtime(tag[3])
-                case 'DAT': dsz = ent.dsz = readsize(tag[3])
-                case 'FLG': ent.flg = readvalue(tag[3])
-                case 'GID': ent.gid = readvalue(tag[3])
-                case 'IDX': ent.idx = readvalue(tag[3])
-                case 'IDZ': ent.idz = readvalue(tag[3])
-                case 'MOD': ent.mod = readvalue(tag[3])
-                case 'SIZ': ent.siz = readvalue(tag[3])
-                case 'UID': ent.uid = readvalue(tag[3])
-                case 'LBL': ent.lbl = readname(tag[3])
-                case 'PAT': ent.filename = readname(tag[3])
-                case 'TYP': ent.typ = rd.readstr(1)
-                case 'YOP': ent.yop = rd.readstr(1)
-
+            value = readvalue(tag[3])
+            setattr(ent, tag[:3].lower(), value)
         o = fh.tell()
-        if dsz:
+        if hasattr(ent, "dat") and ent.dat:
             ent.dataofs = o
             ent.fh = fh
-            o += dsz
+            o += ent.dat
         yield ent
         
-
 
 def extract_aa01(fh):
     """ decode all sections from the aa01 file, yielding each item """
     for ent in decoder(fh, Top):
-        match ent.yop:
-            case 'M':
-                yield from decoder(fh.subreader(ent.dsz), Info)
-            case 'E':
-                yield from decoder(fh.subreader(ent.dsz), Data)
-            case 'O':
-                yield from decoder(fh.subreader(ent.dsz), Meta)
-            case _:
-                print("unknown section", ent.yop)
+        if ent.yop == ord('M'):
+            yield from decoder(fh.subreader(ent.dat), Info)
+        elif ent.yop == ord('E'):
+            yield from decoder(fh.subreader(ent.dat), Data)
+        elif ent.yop == ord('O'):
+            yield from decoder(fh.subreader(ent.dat), Meta)
+        else:
+            print("unknown section", ent.yop)
+
 
 def copydata(ifh, ofh, size):
     """ copy 'size' byte from input 'ifh' to output 'ofh' """
@@ -179,12 +161,12 @@ def extract_files(fh, savedir):
     # note: ignoring metadata, just saving the files.
     for e in extract_aa01(fh):
         if isinstance(e, Data):
-            if e.dsz:
-                savename = os.path.join(savedir, e.filename)
+            if e.dat:
+                savename = os.path.join(savedir, e.pat)
                 os.makedirs(os.path.dirname(savename), exist_ok=True)
                 with open(savename, "wb") as ofh:
                     e.fh.seek(e.dataofs)
-                    copydata(e.fh, ofh, e.dsz)
+                    copydata(e.fh, ofh, e.dat)
 
 
 def main():
